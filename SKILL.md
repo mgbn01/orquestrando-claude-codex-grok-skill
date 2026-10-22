@@ -1,5 +1,5 @@
 ---
-name: orquestrando-grok-e-codex
+name: orquestrando-claude-codex-grok
 description: Use when work would benefit from a second AI engine on this machine — adversarial review of a diff or security fix, a bulk read-only codebase survey, a factual matrix that needs file:line evidence, or handing mechanical multi-file work to Grok or a small fix to Codex. Covers the official Codex plugin (/codex:review, /codex:adversarial-review, /codex:rescue) and the grok and codex CLIs. Also when the user says orquestrar, delegar, segunda opinião, revisão adversarial, grok, codex, or "effort high".
 ---
 

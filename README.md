@@ -32,11 +32,11 @@ As duas linhas que mais mudam resultado, se você só quiser levar isso: **dar l
 1. A skill, em nível de usuário:
 
    ```bash
-   git clone https://github.com/mgbn01/orquestrando-grok-e-codex-skill.git \
-     ~/.claude/skills/orquestrando-grok-e-codex
+   git clone https://github.com/mgbn01/orquestrando-claude-codex-grok-skill.git \
+     ~/.claude/skills/orquestrando-claude-codex-grok
    ```
 
-   Ou em nível de projeto, com destino `.claude/skills/orquestrando-grok-e-codex` dentro do repositório.
+   Ou em nível de projeto, com destino `.claude/skills/orquestrando-claude-codex-grok` dentro do repositório.
 
 2. O plugin oficial do Codex (leia o código antes e fixe a versão):
 
