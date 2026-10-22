@@ -1,5 +1,7 @@
 # Teste básico da skill
 
+> Este teste é da versão 1 (setembro de 2026), feita só com os CLIs. A versão 2 passou a usar o plugin oficial do Codex; os contratos de prompt testados aqui continuam os mesmos.
+
 Metodologia: mesmo cenário para agentes frescos, um **sem** a skill (controle) e um **com**. Cenário — endurecimento anti força-bruta num fluxo de login sobre um objeto stateful com uma instância por chave e execução serializada, diff salvo em `./diff.txt`, pedir segunda opinião a outro motor antes do deploy. Nenhum agente executou comando; todos entregaram comando + prompt integral + o que fariam com os achados.
 
 ## Resultado honesto: o controle foi forte

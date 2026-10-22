@@ -1,105 +1,172 @@
 ---
 name: orquestrando-grok-e-codex
-description: Use when work would benefit from a second AI engine on this machine — bulk read-only codebase surveys, adversarial review of a diff or security fix, or a factual matrix that needs file:line evidence. Also when the user says orquestrar, delegar, segunda opinião, revisão adversarial, grok, codex, or "effort high".
+description: Use when work would benefit from a second AI engine on this machine — adversarial review of a diff or security fix, a bulk read-only codebase survey, a factual matrix that needs file:line evidence, or handing mechanical multi-file work to Grok or a small fix to Codex. Covers the official Codex plugin (/codex:review, /codex:adversarial-review, /codex:rescue) and the grok and codex CLIs. Also when the user says orquestrar, delegar, segunda opinião, revisão adversarial, grok, codex, or "effort high".
 ---
 
-# Orquestrando Grok e Codex
+# Integração Claude Code + Codex + Grok
 
-## Overview
+## Visão geral
 
-Claude Code é o maestro; Grok e Codex são dois motores diferentes chamados por Bash em modo headless. O valor não é velocidade — é **viés diferente**: um motor treinado de outro jeito enxerga o que o meu não enxerga.
+O Claude Code conduz; Codex e Grok são dois motores diferentes que ele chama. O ganho não é velocidade, é **viés diferente**: um modelo treinado de outro jeito enxerga o que o seu não enxerga.
 
-**Princípio central: eles produzem, eu verifico e assino.** Todo achado de delegado é *hipótese*, não fato, até eu reproduzir no código.
+**Princípio central: eles produzem, o Claude verifica e assina.** Achado de outro motor é hipótese até ser reproduzido no código.
+
+Como cada motor entra:
+
+- **Codex:** pelo plugin oficial da OpenAI, [`codex-plugin-cc`](https://github.com/openai/codex-plugin-cc). Ele já resolve a chamada, o modo só leitura e os trabalhos em segundo plano. O `codex exec` fica para scripts e saída em arquivo.
+- **Grok:** pelo CLI `grok` em modo headless. Não há plugin oficial da xAI para o Claude Code.
+
+Esta skill cobre o que o plugin não traz: quem faz o quê, como escrever o pedido e como conferir o que volta.
 
 ## Divisão de papéis
 
 | Papel | Quem | Serve para |
 |---|---|---|
-| **Levantamento** | Grok | Varredura factual em volume: inventariar rotas, mapear tudo que uma CSP precisa permitir, achar todos os `<script>` inline, listar TODOs, migrar padrão em N arquivos. Read-only, com `arquivo:linha`. |
-| **Ataque** | Codex | Revisão adversarial de um diff ou de uma decisão. Segurança, corrida, bug de correção. Motor diferente = achados diferentes. |
-| **Arquitetura, decisão, teste, deploy, verificação** | Eu | Nunca delego. E sou eu que confirmo ou descarto cada achado dos outros dois. |
+| **Ataque** | Codex | Revisão adversarial de um diff ou de uma decisão: segurança, corrida, perda de dados, bug de correção. |
+| **Correção pequena** | Codex | Ajuste de 1 ou 2 arquivos com aceite claro (`/codex:rescue`). |
+| **Levantamento** | Grok | Varredura factual em volume, só leitura e com `arquivo:linha`: inventariar rotas, tudo que uma CSP precisa permitir, todos os `<script>` inline. |
+| **Braçal em vários arquivos** | Grok | Migrar um padrão em N arquivos, traduzir textos, gerar fixtures, a partir de um plano com aceite verificável. |
+| **Arquitetura, decisão, teste, deploy, verificação** | Claude | Nunca delegar. É o Claude que confirma ou descarta cada achado. |
 
-**Não delegue:** decisão de arquitetura, deploy, escrever o teste que prova o achado, ou qualquer coisa cujo resultado eu não consiga verificar sozinho.
+**Não delegue:** decisão de arquitetura, deploy, o teste que prova um achado, ou qualquer coisa cujo resultado você não consiga verificar.
 
-## Invocação (flags conferidas em 2026-08-31)
+## Escolha rápida
 
-**Grok** (`grok` 1.0.13 — modelos: `grok-4.6` default, `grok-4.5`):
-```bash
-grok -m grok-4.6 --reasoning-effort high --cwd <caminho-do-repo> \
-     -p "<prompt>" 2>&1 | tail -100
+| Situação | Comando |
+|---|---|
+| Revisão normal do que mudou | `/codex:review` (branch: `--base main`) |
+| Atacar uma decisão ou área de risco | `/codex:adversarial-review --base main <foco>` |
+| Revisão longa sem travar a sessão | acrescente `--background`; depois `/codex:status` e `/codex:result` |
+| Correção pequena delegada | `/codex:rescue --model <modelo> --effort high <tarefa>` |
+| Levantamento em volume | `grok -p` com o contrato de BLOCOS (abaixo) |
+| Implementação braçal em vários arquivos | `grok -p --always-approve` com plano e "git só leitura" |
+| Revisão em script, com resposta em arquivo ou JSON | `codex exec -s read-only -o <arquivo>` |
+
+## Codex pelo plugin oficial
+
+Instalação (leia o código antes, como em qualquer plugin de terceiro, e fixe a versão revisada):
+
+```text
+/plugin marketplace add https://github.com/openai/codex-plugin-cc.git#v1.0.6
+/plugin install codex@openai-codex
+/reload-plugins
+/codex:setup
 ```
-- `-p/--single` é o headless (imprime no stdout e sai). **Sem `-p` ele abre o TUI e pendura em pipe** ("Device not configured").
-- Extras: `--output-format json`, `--json-schema '<schema>'` (saída estruturada), `--always-approve`, `--max-turns N`, `--agents <JSON>`.
-- `-w/--worktree` **não** combina com `-p`.
 
-**Codex** (`codex` 0.151.0):
+O `/codex:setup` diz se o CLI `codex` e o login estão prontos.
+
+**Quem dispara o quê.** `/codex:review`, `/codex:adversarial-review`, `/codex:status` e `/codex:result` só podem ser digitados pela pessoa (`disable-model-invocation`). Quando o próprio Claude decidir pedir a revisão, ele chama o mesmo script pelo Bash:
+
 ```bash
-codex exec -m gpt-5.6-sol -c model_reasoning_effort="high" \
+C=$(ls ~/.claude/plugins/cache/openai-codex/codex/*/scripts/codex-companion.mjs | tail -1)
+node "$C" adversarial-review --scope working-tree "<contrato de ataque>" </dev/null > revisao.md 2>&1
+```
+
+Troque `adversarial-review` por `review` para a revisão normal; `--base main` revisa a branch. O `/codex:rescue` o Claude pode chamar direto.
+
+- `/codex:review` e `/codex:adversarial-review` são **só leitura**. O review normal não aceita foco; o adversarial aceita texto de foco depois das flags, e é nele que entra o contrato de ataque abaixo.
+- `/codex:rescue` **escreve no repositório**. Use com tarefa delimitada, arquivos nomeados e aceite; confira o diff depois.
+- Modelo e esforço do review vêm do `~/.codex/config.toml`. O `/codex:review` usa `review_model` se ele existir e, se não, `model`; o adversarial usa `model`. Deixe os dois no modelo mais forte que sua conta tem (um `review_model` esquecido passa por cima do `model`), junto com `model_reasoning_effort`. No rescue, passe `--model` e `--effort` explícitos.
+- O plugin traz uma revisão automática ao fim de cada resposta (`/codex:setup --enable-review-gate`). Vem desligada; ela pode prender a sessão em laço e gastar cota, então ligue só se acompanhar.
+
+## Codex pelo CLI (scripts e saída em arquivo)
+
+```bash
+codex exec -m <modelo> -c model_reasoning_effort="high" \
      -C <caminho-do-repo> -s read-only \
-     -o /tmp/resposta.md "<prompt>"
+     -o resposta.md "<prompt>" </dev/null
 ```
-- `codex exec review` = review do repositório inteiro (pronto de fábrica).
-- `-s read-only` **força** investigação sem escrita — melhor que pedir "não edite" no prompt.
-- `-o/--output-last-message <FILE>` captura a resposta limpa; melhor que `| tail -40`.
-- `--skip-git-repo-check` quando o cwd não é repo git. `--output-schema <FILE>` para JSON estruturado.
 
-**Armadilhas de flag (os dois CLIs usam as mesmas letras para coisas diferentes):**
+- `-s read-only` força investigação sem escrita; é melhor que pedir "não edite" no prompt.
+- `-o/--output-last-message <arquivo>` guarda a resposta limpa. `--output-schema <arquivo>` pede JSON estruturado.
+- `codex exec review` precisa de alvo: `--uncommitted`, `--base <branch>`, `--commit <sha>` ou instruções no prompt (para auditoria do repositório inteiro, diga isso no prompt). `--skip-git-repo-check` quando a pasta não é repositório.
+- **Sempre `</dev/null`.** Sem ele, em segundo plano o Codex fica preso em "Reading additional input from stdin..." e nunca responde.
+
+## Grok pelo CLI
+
+```bash
+grok -m <modelo> --reasoning-effort high --cwd <caminho-do-repo> \
+     --output-format json -p "<prompt>" > grok.json
+```
+
+- `-p/--single` é o modo headless: responde e sai. **Sem `-p` ele abre a interface e trava num pipe** ("Device not configured").
+- `--output-format json` traz a resposta final inteira no campo `text`. Use sempre que o prompt for grande: com `-p` puro ele abre subagentes e o texto sai embaralhado.
+- Para implementar, acrescente `--always-approve` e escreva no prompt: "git só leitura, sem commit; quem commita sou eu".
+- `--json-schema '<schema>'` pede saída estruturada; `--max-turns N` limita a execução.
+- `-w/--worktree` combina com `-p` e isola a implementação numa worktree git (inclui as mudanças não commitadas). Não combina com `--fork-session`, e falha em perfil de sandbox que não cria worktree, como `strict`.
+- Um implementador Grok por vez no mesmo working tree, e um teto diário de gasto combinado com quem paga a conta.
+
+## Armadilhas de flag
+
+Os dois CLIs usam as mesmas letras para coisas diferentes:
 
 | Flag | No Grok | No Codex |
 |---|---|---|
 | `-p` | `--single` = o prompt headless | `--profile` = perfil de config ⚠️ |
 | `-c` | `--continue` = retomar sessão ⚠️ | `--config key=value` |
-| effort | `--reasoning-effort high` | `-c model_reasoning_effort="high"` |
-| cwd | `--cwd <dir>` | `-C/--cd <dir>` |
+| esforço | `--reasoning-effort high` | `-c model_reasoning_effort="high"` |
+| pasta | `--cwd <dir>` | `-C/--cd <dir>` |
+
+## Armadilhas de execução
+
+- **Revisão longa morre no limite de tempo do Bash** e não escreve o `-o`. Rode desacoplada: `(nohup codex exec … </dev/null > log 2>&1 &)`, um prompt por item ou grupo pequeno, e espere o arquivo aparecer. Com o plugin, use `--background`.
+- **Modelo novo dando "not supported"** costuma ser CLI desatualizado. Atualize o CLI antes de concluir que a conta não tem o modelo, e nunca no meio de uma execução.
+- **Sempre fixe o modelo.** O padrão da ferramenta acha menos, e o que ele não achar você não fica sabendo que existiu.
 
 ## O loop
 
-1. **Levantar** — Grok varre e devolve os fatos com `arquivo:linha`.
-2. **Decidir e implementar** — eu, com teste.
-3. **Atacar** — Codex recebe o diff e tenta furar.
-4. **Verificar cada achado** — escrevo o teste que reproduz. Não reproduziu, morreu.
-5. **Endurecer** — aplico só os achados que sobreviveram.
-6. **Segunda rodada** — devolvo ao Codex o diff endurecido **contando o que decidi e por quê**, e mando atacar as decisões. É aqui que aparece o que a primeira rodada não pegou.
-7. **Assinar** — CI verde, deploy, e a responsabilidade é minha.
+1. **Levantar:** o Grok varre e devolve os fatos com `arquivo:linha`.
+2. **Decidir e implementar:** o Claude, com teste. Braçal verificável pode ir ao Grok.
+3. **Atacar:** `/codex:adversarial-review` com o contrato de ataque.
+4. **Verificar cada achado:** escrever o teste que reproduz. Não reproduziu, morreu.
+5. **Endurecer:** aplicar só os achados que sobreviveram.
+6. **Segunda rodada:** devolver ao Codex o diff endurecido **contando o que foi decidido e por quê**, e mandar atacar as decisões. É aqui que aparece o que a primeira rodada não pegou.
+7. **Assinar:** CI verde, deploy, e a responsabilidade é de quem conduz.
 
-**Paralelize o passo 3 com trabalho meu:** enquanto o Codex ataca o item A, eu implemento o item B. Dispare em background e siga.
+Paralelize o passo 3: dispare o ataque em segundo plano (`--background` no comando, ou o script com `run_in_background`) e siga com o item seguinte.
 
 ## Contrato de prompt — Grok (levantamento)
 
-Grok solto devolve recomendação genérica. Preso ao contrato, devolve dado. Todo prompt de levantamento tem:
+Grok solto devolve recomendação genérica. Preso ao contrato, devolve dado:
 
-1. **Papel + tarefa + read-only explícito** — "Você é engenheiro de segurança web. Tarefa de LEVANTAMENTO (read-only, não edite nada)."
-2. **Contexto do stack em uma linha** — o que é o app, onde roda, se é público.
-3. **"Preciso de dados concretos extraídos do código, não recomendações genéricas."**
-4. **BLOCOS numerados**, um por pergunta, cada um apontando os arquivos onde procurar. Blocos são o que impede a resposta de virar ensaio.
-5. **Bloco final = o entregável** — normalmente uma tabela markdown com as colunas já definidas por mim.
-6. **Anti-alucinação:** "Cite arquivo:linha sempre. Se não encontrar algo, diga 'não encontrado' em vez de supor."
+1. **Papel, tarefa e só leitura explícito:** "Você é engenheiro de segurança web. Tarefa de LEVANTAMENTO (só leitura, não edite nada)."
+2. **O stack em uma linha:** o que é o app, onde roda, se é público.
+3. **"Preciso de dados concretos extraídos do código, não de recomendações genéricas."**
+4. **BLOCOS numerados**, um por pergunta, cada um dizendo onde procurar. Os blocos impedem a resposta de virar ensaio.
+5. **O último bloco é o entregável**, normalmente uma tabela com colunas definidas por você.
+6. **Anti-alucinação:** "Cite arquivo:linha sempre. Se não encontrar, diga 'não encontrado' em vez de supor."
 
 ## Contrato de prompt — Codex (ataque)
 
-1. **Papel adversarial** — "Você é um revisor de segurança adversarial, sem pena."
-2. **Contexto do runtime + a contra-advertência.** Não basta descrever o runtime (*"objeto stateful com uma instância por chave, execução serializada, RPC sobre WebSocket"*). É preciso **fechar a saída errada**: *"o runtime já serializa as chamadas a esse objeto; só aponte corrida se ela sobreviver a isso, e diga exatamente como."* Sem essa linha o revisor reinventa a corrida que o runtime já resolve — em teste, a versão sem a contra-advertência chegou a **instruir** o modelo a procurar exatamente o falso positivo que já tinha sido refutado.
-3. **Aponte o diff, não cole.** Com `-C <repo>` o Codex lê o arquivo sozinho: *"o diff está em ./diff.txt; leia esse arquivo E as funções inteiras que ele toca, não só as linhas do diff."* Evita inferno de quoting e truncamento. Cole com `$(cat ...)` só quando o arquivo está fora do workspace dele.
-4. **Vetores numerados que eu suspeito** — contorno do bloqueio, DoS direcionado, oráculo de existência, corrida, custo de storage. Numerar dirige o ataque em vez de espalhar.
-5. **Licença para não achar nada** — "Se não houver furo, diga isso claramente **em vez de inventar**." Sem essa linha ele fabrica achado para justificar a chamada.
-6. **Teto de palavras** — "máximo 400 palavras". Corta o relatório inflado.
-7. **Na segunda rodada, entregue as decisões e mande atacá-las:** "A corrida que você apontou NÃO se reproduziu — dois testes de integração fecham a contagem certa. Ataque essa conclusão."
+No plugin, isto vai como texto de foco do `/codex:adversarial-review`; no CLI, como o prompt.
+
+1. **Postura adversarial.** O prompt do plugin já faz isso; no CLI, escreva: "Você é um revisor de segurança adversarial, sem pena."
+2. **O runtime e a contra-advertência.** Não basta descrever o runtime ("objeto stateful com uma instância por chave, execução serializada"). É preciso **fechar a saída errada**: "o runtime já serializa as chamadas; só aponte corrida se ela sobreviver a isso, e diga exatamente como." Sem essa linha, o revisor reinventa a corrida que o runtime já resolve.
+3. **Aponte o diff, não cole.** Com acesso ao repositório, ele lê sozinho: "leia o diff E as funções inteiras que ele toca, não só as linhas mudadas."
+4. **Vetores numerados que você suspeita:** contorno do bloqueio, DoS direcionado, oráculo de existência, corrida, custo de armazenamento. Numerar dirige o ataque.
+5. **Licença para não achar nada:** "Se não houver furo, diga isso claramente em vez de inventar." Sem essa linha, ele fabrica achado para justificar a chamada.
+6. **Teto de palavras:** "máximo 400 palavras".
+7. **Na segunda rodada, entregue as decisões e mande atacá-las:** "A corrida que você apontou NÃO se reproduziu; dois testes de integração fecham a contagem certa. Ataque essa conclusão."
 
 ## A regra de ouro
 
-**Achado de delegado é hipótese. Reproduza antes de agir.**
+**Achado de outro motor é hipótese. Reproduza antes de agir.**
 
-Caso real (endurecimento de um fluxo de login): o Codex devolveu 3 achados, um marcado como corrida **crítica**. Ler o código dava razão a ele — o valor era lido antes do `await`. Escrevi dois testes de concorrência (pipeline numa conexão, N conexões paralelas): **não reproduziu**, o runtime já serializava as chamadas àquele objeto. O "crítico" morreu; os outros dois eram reais — um virou ajuste de parâmetro, o outro foi reclassificado como risco aceito e documentado. Antes disso, uma auditoria delegada já tinha trazido outro "crítico" falso: credencial supostamente exposta no código, quando produção lê de secret.
+Caso real (endurecimento de um fluxo de login): o Codex devolveu 3 achados, um marcado como corrida **crítica**. Ler o código dava razão a ele: o valor era lido antes do `await`. Dois testes de concorrência não reproduziram; o runtime já serializava as chamadas. O "crítico" morreu, e os outros dois eram reais: um virou ajuste de parâmetro e o outro, risco aceito e documentado. Antes disso, uma auditoria delegada tinha trazido outro "crítico" falso: credencial supostamente exposta no código, quando produção lia de um secret.
 
-Vale nos dois sentidos: na rodada seguinte o `gpt-5.6-sol` High achou um caminho de credencial realmente desprotegido que eu tinha deixado passar.
+Vale nos dois sentidos: na rodada seguinte, o Codex com esforço alto achou um caminho de credencial realmente desprotegido que tinha passado.
 
 ## Red flags — pare
 
-- Colar o achado do delegado no relatório sem ter reproduzido.
-- Chamar Grok ou Codex sem `--reasoning-effort high` / `model_reasoning_effort="high"` quando o trabalho é de análise.
-- Prompt de ataque sem a licença de "não achei nada" — o achado que vier é decoração.
-- Prompt de ataque que descreve o runtime mas não fecha a saída errada — sem a contra-advertência, o revisor devolve o falso positivo do manual.
-- Chamar o Codex sem fixar `-m` — o modelo default acha menos que o `gpt-5.6-sol` High, e o que ele não achar você não saberá que existiu.
-- Prompt de levantamento sem blocos e sem exigir `arquivo:linha` — volta ensaio genérico.
+- Colar o achado no relatório sem ter reproduzido.
+- Análise com esforço baixo. Para revisão e levantamento, esforço alto nos dois.
+- Prompt de ataque sem a licença de "não achei nada".
+- Prompt de ataque que descreve o runtime mas não fecha a saída errada.
+- Codex sem modelo fixado, no `config.toml` ou no `-m`.
+- `/codex:rescue` sem arquivos nomeados e aceite, ou sem conferir o diff depois.
+- Levantamento sem blocos e sem exigir `arquivo:linha`.
 - Delegar a decisão em vez do levantamento.
-- Rodar `grok` sem `-p` dentro de pipe e esperar resposta.
+- `grok` sem `-p` dentro de pipe, ou `codex exec` sem `</dev/null`.
+- Dois implementadores no mesmo working tree, ou delegado fazendo commit.
+
+Conferido em 22/10/2026 com o plugin `codex` 1.0.6, `codex-cli` 0.159.3 e `grok` 1.0.67. As ferramentas mudam flag entre versões; se um comando falhar, confira o `--help` antes de assumir que a skill está errada.
